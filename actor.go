@@ -1,16 +1,14 @@
-package actor
-
-import "github.com/lguibr/bollywood/mailbox"
+package main
 
 type Actor struct {
-	Mailbox     *mailbox.Mailbox
+	Mailbox     *Mailbox
 	Performance func()
 	Alive       bool
 }
 
-func NewActor(mailboxConfig []mailbox.MailboxConfig, performance func()) *Actor {
+func NewActor(mailboxConfig []MailboxConfig, performance func()) *Actor {
 	return &Actor{
-		Mailbox:     mailbox.NewMailbox(mailboxConfig),
+		Mailbox:     NewMailbox(mailboxConfig),
 		Performance: performance,
 		Alive:       true,
 	}

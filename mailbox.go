@@ -1,9 +1,7 @@
-package mailbox
-
-import "github.com/lguibr/bollywood/address"
+package main
 
 type Mailbox struct {
-	Addressees map[string]*address.Address
+	Addressees map[string]*Address
 	Activated  bool
 }
 
@@ -12,10 +10,10 @@ type MailboxConfig struct {
 	Id   string
 }
 
-func NewAddresses(config []MailboxConfig) map[string]*address.Address {
-	Addressees := make(map[string]*address.Address)
+func NewAddresses(config []MailboxConfig) map[string]*Address {
+	Addressees := make(map[string]*Address)
 	for _, c := range config {
-		Addressees[c.Id] = address.NewAddress(c.Id, c.Size)
+		Addressees[c.Id] = NewAddress(c.Id, c.Size)
 	}
 	return Addressees
 }
@@ -56,7 +54,7 @@ func (m *Mailbox) CloseAll() {
 	}
 }
 
-func (m *Mailbox) Get(id string) *address.Address {
+func (m *Mailbox) Get(id string) *Address {
 	return m.Addressees[id]
 }
 

@@ -1,19 +1,17 @@
-package producer
+package main
 
 import (
 	"sync"
-
-	"github.com/lguibr/bollywood/actor"
 )
 
 var once sync.Once
 
 type Producer struct {
-	Actor      *actor.Actor
+	Actor      *Actor
 	Production map[string]func(interface{})
 }
 
-func NewProducer(actor *actor.Actor, production map[string]func(interface{})) *Producer {
+func NewProducer(actor *Actor, production map[string]func(interface{})) *Producer {
 	return &Producer{
 		Actor:      actor,
 		Production: production,

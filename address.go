@@ -1,4 +1,4 @@
-package address
+package main
 
 type Address struct {
 	Size    int
