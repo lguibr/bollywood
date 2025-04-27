@@ -1,4 +1,4 @@
-// File: bollywood/process.go
+// File: process.go
 package bollywood
 
 import (
@@ -30,34 +30,7 @@ func newProcess(engine *Engine, pid *PID, props *Props) *process {
 	}
 }
 
-// sendMessage sends a message to the actor's mailbox.
-// (No changes needed here)
-func (p *process) sendMessage(message interface{}, sender *PID) {
-	// Optimization: Don't bother sending user messages if already stopped/stopping
-	// Allow system messages (like Stopping, Stopped) through.
-	_, isStopping := message.(Stopping)
-	_, isStopped := message.(Stopped)
-	if p.stopped.Load() && !isStopping && !isStopped {
-		// fmt.Printf("Actor %s already stopped, dropping user message %T\n", p.pid.ID, message) // Reduce noise
-		return
-	}
-
-	envelope := &messageEnvelope{
-		Sender:  sender,
-		Message: message,
-	}
-
-	// Use non-blocking send with a fallback to report if mailbox is full
-	select {
-	case p.mailbox <- envelope:
-		// Message sent successfully
-	default:
-		// Avoid logging during shutdown spam or for frequent messages
-		// if !p.engine.stopping.Load() {
-		// 	fmt.Printf("Actor %s mailbox full, dropping message type %T\n", p.pid.ID, message) // Reduce noise
-		// }
-	}
-}
+// sendMessage removed as it was unused. Messages are sent via Engine.Send.
 
 // run is the main loop for the actor process.
 func (p *process) run() {
@@ -75,18 +48,14 @@ func (p *process) run() {
 			}
 			// Remove from engine *after* all cleanup attempts
 			p.engine.remove(p.pid)
-			// fmt.Printf("Actor %s goroutine exiting.\n", p.pid.ID) // Debug logging
 		}()
 
 		// Send the final Stopped message if actor was initialized and Stopping was invoked
 		if p.actor != nil && stoppingInvoked {
-			// fmt.Printf("Actor %s invoking final Stopped handler.\n", p.pid.ID) // Debug log
 			p.invokeReceive(Stopped{}, nil) // Call Stopped handler
 		} else if p.actor != nil && !stoppingInvoked {
-			// This case might happen if the actor panicked *before* Stopping could be called.
-			// We might still want to log Stopped, but it indicates an unusual exit.
 			fmt.Printf("WARN: Actor %s stopped without Stopping handler being invoked (likely due to early panic).\n", p.pid.ID)
-			p.invokeReceive(Stopped{}, nil) // Call Stopped handler anyway? Or just log? Let's call it.
+			p.invokeReceive(Stopped{}, nil)
 		}
 
 	}()
@@ -105,7 +74,6 @@ func (p *process) run() {
 				}
 				// Attempt to invoke Stopping handler on panic if not already invoked
 				if p.actor != nil && !stoppingInvoked {
-					// fmt.Printf("Actor %s invoking Stopping due to panic.\n", p.pid.ID) // Reduce noise
 					p.invokeReceive(Stopping{}, nil)
 					stoppingInvoked = true
 				}
@@ -121,19 +89,15 @@ func (p *process) run() {
 	// Send Started message *after* actor is created
 	p.invokeReceive(Started{}, nil)
 
-	// fmt.Printf("Actor %s goroutine started and processing messages.\n", p.pid.ID) // Debug logging
-
 	// Main message processing loop
 	for {
 		select {
 		case <-p.stopCh:
 			// Stop signal received directly (e.g., from engine.Stop or panic recovery)
-			// fmt.Printf("Actor %s received stop signal via stopCh.\n", p.pid.ID) // Debug logging
 			if p.stopped.CompareAndSwap(false, true) {
 				// If not already marked stopped (e.g., by Stopping message),
 				// invoke Stopping handler now before exiting.
 				if !stoppingInvoked {
-					// fmt.Printf("Actor %s invoking Stopping due to stopCh closure.\n", p.pid.ID) // Reduce noise
 					p.invokeReceive(Stopping{}, nil)
 					stoppingInvoked = true
 				}
@@ -151,7 +115,6 @@ func (p *process) run() {
 						close(p.stopCh)
 					}
 					if !stoppingInvoked {
-						// fmt.Printf("Actor %s invoking Stopping due to unexpected mailbox closure.\n", p.pid.ID) // Reduce noise
 						p.invokeReceive(Stopping{}, nil)
 						stoppingInvoked = true
 					}
@@ -164,14 +127,12 @@ func (p *process) run() {
 			_, isStopping := envelope.Message.(Stopping)
 			_, isStoppedMsg := envelope.Message.(Stopped) // Renamed to avoid conflict
 			if p.stopped.Load() && !isStopping && !isStoppedMsg {
-				// fmt.Printf("Actor %s is stopped, ignoring message type %T\n", p.pid.ID, envelope.Message) // Reduce noise
 				continue
 			}
 
 			// Handle system messages directly
 			switch msg := envelope.Message.(type) {
 			case Stopping:
-				// fmt.Printf("Actor %s processing Stopping message from mailbox.\n", p.pid.ID) // Debug logging
 				if p.stopped.CompareAndSwap(false, true) { // Process only once
 					if !stoppingInvoked {
 						p.invokeReceive(msg, envelope.Sender)
@@ -185,12 +146,9 @@ func (p *process) run() {
 					}
 				}
 			case Stopped:
-				// Should be handled in defer, but log if received via mailbox.
-				// This indicates a potential logic error elsewhere.
 				fmt.Printf("WARN: Actor %s received unexpected Stopped message via mailbox.\n", p.pid.ID)
 				if p.stopped.CompareAndSwap(false, true) {
 					if !stoppingInvoked {
-						// If Stopping wasn't called, call it now before Stopped
 						p.invokeReceive(Stopping{}, nil)
 						stoppingInvoked = true
 					}
@@ -225,7 +183,6 @@ func (p *process) invokeReceive(msg interface{}, sender *PID) {
 			if r := recover(); r != nil {
 				fmt.Printf("Actor %s panicked during Receive(%T): %v\nStack trace:\n%s\n", p.pid.ID, msg, r, string(debug.Stack()))
 				// Ensure stopCh is closed on panic within Receive
-				// Use CompareAndSwap to ensure it's only closed once and stopping is invoked once
 				if p.stopped.CompareAndSwap(false, true) {
 					select {
 					case <-p.stopCh:
@@ -233,9 +190,6 @@ func (p *process) invokeReceive(msg interface{}, sender *PID) {
 						close(p.stopCh)
 					}
 					// Attempt to invoke Stopping handler on panic if not already invoked
-					// We cannot set stoppingInvoked here directly, but the main run loop's
-					// defer will handle the Stopped message correctly based on the atomic p.stopped flag.
-					// We still call the Stopping handler here to attempt cleanup.
 					p.invokeReceive(Stopping{}, nil) // Call stopping handler
 				}
 			}

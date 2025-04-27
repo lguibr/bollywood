@@ -1,4 +1,4 @@
-// File: bollywood/engine.go
+// File: engine.go
 package bollywood
 
 import (
@@ -71,35 +71,25 @@ func (e *Engine) Spawn(props *Props) *PID {
 
 	go proc.run() // Start the actor's run loop
 
-	// Started message is now sent internally by process.run after actor creation
-
 	return pid
 }
 
 // Send delivers a message to the actor identified by the PID.
 func (e *Engine) Send(pid *PID, message interface{}, sender *PID) {
 	if pid == nil {
-		// fmt.Println("Engine: Attempted to send message to nil PID") // Reduce noise
 		return
 	}
 	// Allow system messages during shutdown for cleanup
 	_, isStopping := message.(Stopping)
 	_, isStopped := message.(Stopped)
-	isSystemMsg := isStopping || isStopped // Started is handled internally now
+	isSystemMsg := isStopping || isStopped
 
 	if e.stopping.Load() && !isSystemMsg {
-		// fmt.Printf("Engine is stopping, dropping user message %T for %s\n", message, pid.ID) // Reduce noise
 		return
 	}
 
-	// Use sync.Map for mailbox lookup
 	val, ok := e.mailboxMap.Load(pid.ID)
 	if !ok {
-		// Actor might have already stopped and removed its mailbox
-		// Avoid logging during shutdown tests if actor was already stopped
-		// if !e.stopping.Load() {
-		// 	fmt.Printf("Actor %s mailbox not found, dropping message %T\n", pid.ID, message) // Reduce noise
-		// }
 		return
 	}
 
@@ -119,10 +109,7 @@ func (e *Engine) Send(pid *PID, message interface{}, sender *PID) {
 	case mailbox <- envelope:
 		// Message sent
 	default:
-		// Avoid logging during shutdown spam or for frequent messages
-		// if !e.stopping.Load() {
-		// 	fmt.Printf("Actor %s mailbox full, dropping message type %T\n", pid.ID, message) // Reduce noise
-		// }
+		// Mailbox full, message dropped (avoid logging spam)
 	}
 }
 
@@ -130,7 +117,6 @@ func (e *Engine) Send(pid *PID, message interface{}, sender *PID) {
 // It signals the actor's stop channel; the actor's run loop handles cleanup.
 func (e *Engine) Stop(pid *PID) {
 	if pid == nil {
-		// fmt.Println("Engine: Stop called with nil PID") // Reduce noise
 		return
 	}
 	e.mu.RLock()
@@ -144,11 +130,9 @@ func (e *Engine) Stop(pid *PID) {
 		case <-proc.stopCh: // Already closed
 		default:
 			close(proc.stopCh)
-			// fmt.Printf("Engine closed stopCh for %s\n", pid.ID) // Debug log
 		}
-	} else {
-		// fmt.Printf("Engine: Stop called for non-existent/already stopped actor %s\n", pid.ID) // Reduce noise
 	}
+	// Removed empty else block here
 }
 
 // remove removes an actor process from the engine's tracking. Called by process.run defer.
@@ -161,7 +145,6 @@ func (e *Engine) remove(pid *PID) {
 	e.mu.Unlock()
 	// Remove mailbox from sync.Map as well
 	e.mailboxMap.Delete(pid.ID)
-	// fmt.Printf("Actor %s removed from engine\n", pid.ID) // Reduce noise
 }
 
 // Shutdown stops all actors and waits for them to terminate gracefully.
@@ -176,7 +159,6 @@ func (e *Engine) Shutdown(timeout time.Duration) {
 	e.mu.RLock()
 	pidsToStop := make([]*PID, 0, len(e.actors))
 	for _, proc := range e.actors {
-		// Ensure proc and proc.pid are not nil before appending
 		if proc != nil && proc.pid != nil {
 			pidsToStop = append(pidsToStop, proc.pid)
 		}
@@ -195,11 +177,9 @@ func (e *Engine) Shutdown(timeout time.Duration) {
 		remaining := len(e.actors)
 		e.mu.RUnlock()
 		if remaining == 0 {
-			// fmt.Println("All actors stopped.") // Reduce noise
 			break
 		}
-		// fmt.Printf("Shutdown waiting... %d actors remaining.\n", remaining) // Debug log
-		time.Sleep(100 * time.Millisecond) // Increased sleep duration
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	// Check remaining actors after timeout
@@ -212,14 +192,10 @@ func (e *Engine) Shutdown(timeout time.Duration) {
 		}
 		fmt.Printf("Engine shutdown timeout: %d actors did not stop gracefully: %s\n",
 			remainingCount, strings.Join(remainingActors, ", "))
-		// Force remove remaining actors from the map to prevent leaks if engine is reused (not typical)
-		// Note: Their goroutines might still be running.
-		e.mu.RUnlock() // Release RLock before acquiring Lock
+		e.mu.RUnlock()
 		e.mu.Lock()
-		// Clear the actors map
 		for pidStr, proc := range e.actors {
-			e.mailboxMap.Delete(pidStr) // Also remove from mailbox map
-			// Attempt to close stopCh again just in case
+			e.mailboxMap.Delete(pidStr)
 			if proc != nil {
 				select {
 				case <-proc.stopCh:
@@ -231,7 +207,7 @@ func (e *Engine) Shutdown(timeout time.Duration) {
 		e.actors = make(map[string]*process) // Clear the map
 		e.mu.Unlock()
 	} else {
-		e.mu.RUnlock() // Release RLock if count was 0
+		e.mu.RUnlock()
 	}
 
 	fmt.Println("Engine shutdown complete.")
