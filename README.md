@@ -1,5 +1,11 @@
 
-# Bollywood Actor Library [![Go Test](https://github.com/lguibr/bollywood/actions/workflows/test.yml/badge.svg)](https://github.com/lguibr/bollywood/actions/workflows/test.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/lguibr/bollywood)](https://goreportcard.com/report/github.com/lguibr/bollywood) [![Go Reference](https://pkg.go.dev/badge/github.com/lguibr/bollywood.svg)](https://pkg.go.dev/github.com/lguibr/bollywood)
+[![Go Test](https://github.com/lguibr/bollywood/actions/workflows/test.yml/badge.svg)](https://github.com/lguibr/bollywood/actions/workflows/test.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/lguibr/bollywood)](https://goreportcard.com/report/github.com/lguibr/bollywood) [![Go Reference](https://pkg.go.dev/badge/github.com/lguibr/bollywood.svg)](https://pkg.go.dev/github.com/lguibr/bollywood)
+
+# Bollywood Actor Library 
+
+<p align="center">
+  <img src="bitmap.png" alt="Logo" width="300"/>
+</p>
 
 Bollywood is a lightweight Actor Model implementation for Go, inspired by the principles of asynchronous message passing and state encapsulation. It aims to provide a simple yet powerful way to build concurrent applications using actors, channels, and minimal locking.
 
