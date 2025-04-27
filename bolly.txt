@@ -1,0 +1,1450 @@
+File: .github/workflows/lint.yml
+""""""
+# File: .github/workflows/lint.yml (in new bollywood repo)
+name: Bollywood-Lint
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest # Or pin to a specific version
+""""""
+
+
+File: .github/workflows/test.yml
+""""""
+# File: .github/workflows/test.yml (in bollywood repo)
+name: Bollywood-Test
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+        cache: true
+        cache-dependency-path: 'go.sum'
+
+    - name: Run tests with coverage
+      run: go test -v -race -covermode=atomic -coverprofile=coverage.out ./...
+
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }} # Optional: for private repos or specific needs
+        files: ./coverage.out
+        fail_ci_if_error: true # Optional: fail workflow if upload fails
+""""""
+
+
+File: .gitignore
+""""""
+# File: .gitignore (in new bollywood repo)
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace cache
+.gocache/
+
+# Environment variables potentially stored in file
+.env
+
+# VS Code settings
+.vscode/
+""""""
+
+
+File: README.md
+""""""
+
+[![Go Test](https://github.com/lguibr/bollywood/actions/workflows/test.yml/badge.svg)](https://github.com/lguibr/bollywood/actions/workflows/test.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/lguibr/bollywood)](https://goreportcard.com/report/github.com/lguibr/bollywood) [![Go Reference](https://pkg.go.dev/badge/github.com/lguibr/bollywood.svg)](https://pkg.go.dev/github.com/lguibr/bollywood)
+
+# Bollywood Actor Library 
+
+<p align="center">
+  <img src="bitmap.png" alt="Logo" width="300"/>
+</p>
+
+Bollywood is a lightweight Actor Model implementation for Go, inspired by the principles of asynchronous message passing and state encapsulation. It aims to provide a simple yet powerful way to build concurrent applications using actors, channels, and minimal locking.
+
+## Installation
+
+```bash
+go get github.com/lguibr/bollywood@latest
+```
+
+## Core Concepts
+
+*   **Engine:** The central coordinator responsible for spawning, managing, and terminating actors.
+*   **Actor:** An entity that encapsulates state and behavior. It implements the `Actor` interface, primarily the `Receive(Context)` method.
+*   **PID (Process ID):** An opaque identifier used to reference and send messages to a specific actor instance.
+*   **Context:** Provided to an actor's `Receive` method, allowing it to interact with the system (e.g., get its PID, sender PID, spawn children, send messages).
+*   **Props:** Configuration object used to spawn new actors, specifying how to create an actor instance.
+*   **Message:** Any Go `interface{}` value sent between actors.
+*   **System Messages:** `Started`, `Stopping`, `Stopped` provide lifecycle hooks.
+
+## Basic Usage
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/lguibr/bollywood" // Use the new module path
+)
+
+// Define an actor struct
+type MyActor struct {
+	count int
+}
+
+// Implement the Actor interface
+func (a *MyActor) Receive(ctx bollywood.Context) {
+	switch msg := ctx.Message().(type) {
+	case string:
+		fmt.Printf("Actor %s received string: %s\n", ctx.Self().ID, msg)
+		a.count++
+	case int:
+		fmt.Printf("Actor %s received int: %d\n", ctx.Self().ID, msg)
+		// Example: Respond to sender
+		if ctx.Sender() != nil {
+			ctx.Engine().Send(ctx.Sender(), fmt.Sprintf("Processed %d", msg), ctx.Self())
+		}
+	case bollywood.Started:
+        fmt.Printf("Actor %s started\n", ctx.Self().ID)
+    case bollywood.Stopping:
+        fmt.Printf("Actor %s stopping\n", ctx.Self().ID)
+    case bollywood.Stopped:
+        fmt.Printf("Actor %s stopped\n", ctx.Self().ID)
+	default:
+		fmt.Printf("Actor %s received unknown message type\n", ctx.Self().ID)
+	}
+}
+
+// Actor producer function
+func newMyActor() bollywood.Actor {
+	return &MyActor{}
+}
+
+func main() {
+	// Create an actor engine
+	engine := bollywood.NewEngine()
+	defer engine.Shutdown(1 * time.Second) // Ensure shutdown
+
+	// Define properties for the actor
+	props := bollywood.NewProps(newMyActor)
+
+	// Spawn the actor
+	pid := engine.Spawn(props)
+
+	// Send messages
+	engine.Send(pid, "hello world", nil) // nil sender for messages from outside actors
+	engine.Send(pid, 42, nil)
+
+    // Spawn another actor to receive a response
+    responderProps := bollywood.NewProps(func() bollywood.Actor {
+        return &MyActor{} // Using MyActor for simplicity, could be a different type
+    })
+    responderPID := engine.Spawn(responderProps)
+
+    // Send a message and expect a response
+    engine.Send(pid, 100, responderPID)
+
+
+	// Allow time for messages to be processed
+	time.Sleep(100 * time.Millisecond)
+
+	// Stop is handled by engine.Shutdown
+	// engine.Stop(pid)
+    // engine.Stop(responderPID)
+
+	// Allow time for stop messages (covered by Shutdown)
+	// time.Sleep(50 * time.Millisecond)
+
+    fmt.Println("Engine finished")
+}
+
+```
+
+## Example Usage
+
+See the [PonGo](https://github.com/lguibr/pongo) project for an example of how Bollywood can be used to build a concurrent game server.
+""""""
+
+
+File: actor.go
+""""""
+package bollywood
+
+// Actor is the interface that defines actor behavior.
+// Actors process messages sequentially received from their mailbox.
+type Actor interface {
+	// Receive processes incoming messages. The actor can use the context
+	// to interact with the system (e.g., get self PID, sender PID, spawn children).
+	Receive(ctx Context)
+}
+""""""
+
+
+File: context.go
+""""""
+package bollywood
+
+// Context provides information and capabilities to an Actor during message processing.
+type Context interface {
+	// Engine returns the Actor Engine managing this actor.
+	Engine() *Engine
+	// Self returns the PID of the actor processing the message.
+	Self() *PID
+	// Sender returns the PID of the actor that sent the message, if available.
+	Sender() *PID
+	// Message returns the actual message being processed.
+	Message() interface{}
+}
+
+// context implements the Context interface.
+type context struct {
+	engine  *Engine
+	self    *PID
+	sender  *PID
+	message interface{}
+}
+
+func (c *context) Engine() *Engine      { return c.engine }
+func (c *context) Self() *PID           { return c.self }
+func (c *context) Sender() *PID         { return c.sender }
+func (c *context) Message() interface{} { return c.message }
+""""""
+
+
+File: engine.go
+""""""
+// File: engine.go
+package bollywood
+
+import (
+	"fmt"
+	"strings" // Import strings
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// Engine manages the lifecycle and message dispatching for actors.
+type Engine struct {
+	pidCounter uint64
+	actors     map[string]*process
+	mu         sync.RWMutex // Protects the actors map
+	stopping   atomic.Bool  // Indicates if the engine is shutting down
+	mailboxMap sync.Map     // Store mailboxes separately for non-blocking send
+}
+
+// Mailbox returns the mailbox channel for a given PID.
+// Used for potential non-blocking sends or external monitoring.
+func (e *Engine) Mailbox(pid *PID) chan *messageEnvelope {
+	if pid == nil {
+		return nil
+	}
+	val, ok := e.mailboxMap.Load(pid.ID)
+	if !ok {
+		return nil
+	}
+	mailbox, ok := val.(chan *messageEnvelope)
+	if !ok {
+		// This should not happen if stored correctly
+		fmt.Printf("ERROR: Invalid mailbox type found for PID %s\n", pid.ID)
+		return nil
+	}
+	return mailbox
+}
+
+// NewEngine creates a new actor engine.
+func NewEngine() *Engine {
+	return &Engine{
+		actors: make(map[string]*process),
+		// mailboxMap is zero-value initialized, which is fine for sync.Map
+	}
+}
+
+// nextPID generates a unique process ID.
+func (e *Engine) nextPID() *PID {
+	id := atomic.AddUint64(&e.pidCounter, 1)
+	return &PID{ID: fmt.Sprintf("actor-%d", id)}
+}
+
+// Spawn creates and starts a new actor based on the provided Props.
+// It returns the PID of the newly created actor.
+func (e *Engine) Spawn(props *Props) *PID {
+	if e.stopping.Load() {
+		fmt.Println("Engine is stopping, cannot spawn new actors")
+		return nil
+	}
+
+	pid := e.nextPID()
+	proc := newProcess(e, pid, props)
+
+	// Store mailbox in the sync.Map before starting the process
+	e.mailboxMap.Store(pid.ID, proc.mailbox)
+
+	e.mu.Lock()
+	e.actors[pid.ID] = proc
+	e.mu.Unlock()
+
+	go proc.run() // Start the actor's run loop
+
+	return pid
+}
+
+// Send delivers a message to the actor identified by the PID.
+func (e *Engine) Send(pid *PID, message interface{}, sender *PID) {
+	if pid == nil {
+		return
+	}
+	// Allow system messages during shutdown for cleanup
+	_, isStopping := message.(Stopping)
+	_, isStopped := message.(Stopped)
+	isSystemMsg := isStopping || isStopped
+
+	if e.stopping.Load() && !isSystemMsg {
+		return
+	}
+
+	val, ok := e.mailboxMap.Load(pid.ID)
+	if !ok {
+		return
+	}
+
+	mailbox, ok := val.(chan *messageEnvelope)
+	if !ok {
+		fmt.Printf("ERROR: Invalid mailbox type found for PID %s\n", pid.ID)
+		return
+	}
+
+	envelope := &messageEnvelope{
+		Sender:  sender,
+		Message: message,
+	}
+
+	// Use non-blocking send
+	select {
+	case mailbox <- envelope:
+		// Message sent
+	default:
+		// Mailbox full, message dropped (avoid logging spam)
+	}
+}
+
+// Stop requests an actor to stop processing messages and shut down.
+// It signals the actor's stop channel; the actor's run loop handles cleanup.
+func (e *Engine) Stop(pid *PID) {
+	if pid == nil {
+		return
+	}
+	e.mu.RLock()
+	proc, ok := e.actors[pid.ID]
+	e.mu.RUnlock()
+
+	if ok && proc != nil {
+		// Directly signal the stop channel to ensure termination.
+		// The process loop will handle calling the Stopping handler.
+		select {
+		case <-proc.stopCh: // Already closed
+		default:
+			close(proc.stopCh)
+		}
+	}
+	// Removed empty else block here
+}
+
+// remove removes an actor process from the engine's tracking. Called by process.run defer.
+func (e *Engine) remove(pid *PID) {
+	if pid == nil {
+		return
+	}
+	e.mu.Lock()
+	delete(e.actors, pid.ID)
+	e.mu.Unlock()
+	// Remove mailbox from sync.Map as well
+	e.mailboxMap.Delete(pid.ID)
+}
+
+// Shutdown stops all actors and waits for them to terminate gracefully.
+func (e *Engine) Shutdown(timeout time.Duration) {
+	if !e.stopping.CompareAndSwap(false, true) {
+		fmt.Println("Engine already shutting down")
+		return
+	}
+	fmt.Println("Engine shutdown initiated...")
+
+	// Collect PIDs to stop while holding lock
+	e.mu.RLock()
+	pidsToStop := make([]*PID, 0, len(e.actors))
+	for _, proc := range e.actors {
+		if proc != nil && proc.pid != nil {
+			pidsToStop = append(pidsToStop, proc.pid)
+		}
+	}
+	e.mu.RUnlock()
+
+	fmt.Printf("Stopping %d actors...\n", len(pidsToStop))
+	for _, pid := range pidsToStop {
+		e.Stop(pid) // Stop now only closes stopCh
+	}
+
+	// Wait for actors to stop
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		e.mu.RLock()
+		remaining := len(e.actors)
+		e.mu.RUnlock()
+		if remaining == 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Check remaining actors after timeout
+	e.mu.RLock()
+	remainingCount := len(e.actors)
+	if remainingCount > 0 {
+		remainingActors := []string{}
+		for pidStr := range e.actors {
+			remainingActors = append(remainingActors, pidStr)
+		}
+		fmt.Printf("Engine shutdown timeout: %d actors did not stop gracefully: %s\n",
+			remainingCount, strings.Join(remainingActors, ", "))
+		e.mu.RUnlock()
+		e.mu.Lock()
+		for pidStr, proc := range e.actors {
+			e.mailboxMap.Delete(pidStr)
+			if proc != nil {
+				select {
+				case <-proc.stopCh:
+				default:
+					close(proc.stopCh)
+				}
+			}
+		}
+		e.actors = make(map[string]*process) // Clear the map
+		e.mu.Unlock()
+	} else {
+		e.mu.RUnlock()
+	}
+
+	fmt.Println("Engine shutdown complete.")
+}
+""""""
+
+
+File: engine_test.go
+""""""
+// File: engine_test.go
+package bollywood
+
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+)
+
+// --- Test Actor ---
+
+type testActor struct {
+	mu           sync.Mutex
+	Received     []interface{}
+	StartedCount int32
+	StoppedCount int32
+	StartedWg    *sync.WaitGroup // Signal when Started is received
+	MessageWg    *sync.WaitGroup // Signal when a specific message is received
+	StopWg       *sync.WaitGroup // Signal when Stopping is received
+	PanicOnMsg   interface{}     // Message type to panic on
+}
+
+func newTestActor(startedWg, messageWg, stopWg *sync.WaitGroup) *testActor {
+	return &testActor{
+		StartedWg: startedWg,
+		MessageWg: messageWg,
+		StopWg:    stopWg,
+	}
+}
+
+func (a *testActor) Receive(ctx Context) {
+	a.mu.Lock()
+	msg := ctx.Message() // Capture message while locked
+	a.Received = append(a.Received, msg)
+	a.mu.Unlock() // Unlock before potentially blocking wg.Done()
+
+	// Handle panics for testing recovery
+	if a.PanicOnMsg != nil && fmt.Sprintf("%T", msg) == fmt.Sprintf("%T", a.PanicOnMsg) {
+		panic(fmt.Sprintf("test panic on %T", msg))
+	}
+
+	switch msg.(type) {
+	case Started:
+		atomic.AddInt32(&a.StartedCount, 1)
+		if a.StartedWg != nil {
+			a.StartedWg.Done() // Signal that Started was received
+		}
+	case Stopping:
+		// Stopping logic if needed
+		if a.StopWg != nil {
+			a.StopWg.Done() // Signal that Stopping was received
+		}
+	case Stopped:
+		atomic.AddInt32(&a.StoppedCount, 1)
+		// Note: StoppedWg might be tricky as the actor goroutine exits immediately after
+	case string, int: // Example user messages
+		if a.MessageWg != nil {
+			a.MessageWg.Done() // Signal that a user message was received
+		}
+	}
+}
+
+func (a *testActor) GetReceived() []interface{} {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	// Return a copy
+	msgs := make([]interface{}, len(a.Received))
+	copy(msgs, a.Received)
+	return msgs
+}
+
+// --- Engine Tests ---
+
+func TestEngine_NewEngine(t *testing.T) {
+	engine := NewEngine()
+	assert.NotNil(t, engine)
+	assert.NotNil(t, engine.actors)
+	assert.False(t, engine.stopping.Load())
+}
+
+func TestEngine_Spawn(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+
+	var startedWg sync.WaitGroup
+	startedWg.Add(1)
+
+	props := NewProps(func() Actor { return newTestActor(&startedWg, nil, nil) })
+	pid := engine.Spawn(props)
+
+	assert.NotNil(t, pid)
+	assert.NotEmpty(t, pid.ID)
+
+	// Check if actor exists in engine map
+	engine.mu.RLock()
+	_, exists := engine.actors[pid.ID]
+	engine.mu.RUnlock()
+	assert.True(t, exists, "Actor process should exist in engine map")
+
+	// Wait for the actor to receive the Started message
+	waitTimeout(&startedWg, 500*time.Millisecond, t, "Actor did not start")
+
+	// Check mailbox exists
+	mailbox := engine.Mailbox(pid)
+	assert.NotNil(t, mailbox, "Mailbox should exist for spawned actor")
+}
+
+func TestEngine_Spawn_DuringShutdown(t *testing.T) {
+	engine := NewEngine()
+	engine.stopping.Store(true) // Simulate shutdown state
+
+	props := NewProps(func() Actor { return newTestActor(nil, nil, nil) })
+	pid := engine.Spawn(props)
+
+	assert.Nil(t, pid, "Should not spawn actor during shutdown")
+}
+
+func TestEngine_Send_Basic(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+
+	var startedWg, messageWg sync.WaitGroup
+	startedWg.Add(1)
+	messageWg.Add(2) // Expecting two messages
+
+	actor := newTestActor(&startedWg, &messageWg, nil)
+	props := NewProps(func() Actor { return actor })
+	pid := engine.Spawn(props)
+
+	waitTimeout(&startedWg, 500*time.Millisecond, t, "Actor did not start")
+
+	engine.Send(pid, "hello", nil)
+	engine.Send(pid, 123, nil)
+
+	waitTimeout(&messageWg, 500*time.Millisecond, t, "Actor did not receive messages")
+
+	received := actor.GetReceived()
+	assert.Contains(t, received, "hello")
+	assert.Contains(t, received, 123)
+	assert.IsType(t, Started{}, received[0], "First message should be Started")
+}
+
+func TestEngine_Send_ToNilPID(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+	// Should not panic or error
+	engine.Send(nil, "test", nil)
+}
+
+func TestEngine_Send_ToNonExistentPID(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+	// Should not panic or error
+	engine.Send(&PID{ID: "actor-does-not-exist"}, "test", nil)
+}
+
+func TestEngine_Send_DuringShutdown(t *testing.T) {
+	engine := NewEngine()
+	var startedWg sync.WaitGroup
+	startedWg.Add(1)
+	actor := newTestActor(&startedWg, nil, nil)
+	props := NewProps(func() Actor { return actor })
+	pid := engine.Spawn(props)
+	waitTimeout(&startedWg, 500*time.Millisecond, t, "Actor did not start")
+
+	engine.stopping.Store(true) // Simulate shutdown
+
+	// System messages should still be allowed (e.g., Stopping, Stopped)
+	engine.Send(pid, Stopping{}, nil)
+	// User messages should be dropped
+	engine.Send(pid, "should be dropped", nil)
+
+	time.Sleep(100 * time.Millisecond) // Allow time for potential processing
+
+	received := actor.GetReceived()
+	assert.Contains(t, received, Stopping{}, "Stopping message should be received during shutdown")
+	assert.NotContains(t, received, "should be dropped", "User message should be dropped during shutdown")
+
+	engine.Shutdown(1 * time.Second) // Complete shutdown
+}
+
+func TestEngine_Stop_Basic(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+
+	var startedWg, stopWg sync.WaitGroup
+	startedWg.Add(1)
+	stopWg.Add(1)
+
+	actor := newTestActor(&startedWg, nil, &stopWg)
+	props := NewProps(func() Actor { return actor })
+	pid := engine.Spawn(props)
+
+	waitTimeout(&startedWg, 500*time.Millisecond, t, "Actor did not start")
+
+	engine.Stop(pid)
+
+	// Wait for the actor to receive the Stopping message
+	waitTimeout(&stopWg, 500*time.Millisecond, t, "Actor did not receive Stopping")
+
+	// Allow time for the actor goroutine to exit and be removed
+	time.Sleep(100 * time.Millisecond)
+
+	// Check actor is removed from engine maps
+	engine.mu.RLock()
+	_, exists := engine.actors[pid.ID]
+	engine.mu.RUnlock()
+	assert.False(t, exists, "Actor process should be removed after stop")
+
+	_, mailboxExists := engine.mailboxMap.Load(pid.ID)
+	assert.False(t, mailboxExists, "Actor mailbox should be removed after stop")
+
+	// Send message to stopped actor - should be dropped silently
+	engine.Send(pid, "after stop", nil)
+	time.Sleep(50 * time.Millisecond)
+	received := actor.GetReceived()
+	assert.NotContains(t, received, "after stop")
+}
+
+func TestEngine_Stop_NilPID(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+	// Should not panic
+	engine.Stop(nil)
+}
+
+func TestEngine_Stop_NonExistentPID(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+	// Should not panic
+	engine.Stop(&PID{ID: "actor-does-not-exist"})
+}
+
+func TestEngine_Stop_AlreadyStopped(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+
+	var startedWg, stopWg sync.WaitGroup
+	startedWg.Add(1)
+	stopWg.Add(1)
+
+	props := NewProps(func() Actor { return newTestActor(&startedWg, nil, &stopWg) })
+	pid := engine.Spawn(props)
+	waitTimeout(&startedWg, 500*time.Millisecond, t, "Actor did not start")
+
+	engine.Stop(pid)
+	waitTimeout(&stopWg, 500*time.Millisecond, t, "Actor did not receive Stopping")
+	time.Sleep(100 * time.Millisecond) // Allow removal
+
+	// Stop again - should not panic or error
+	engine.Stop(pid)
+}
+
+func TestEngine_Shutdown_Graceful(t *testing.T) {
+	engine := NewEngine()
+	// No defer shutdown, we are testing it
+
+	var startedWg1, startedWg2 sync.WaitGroup
+	var stopWg1, stopWg2 sync.WaitGroup
+	startedWg1.Add(1)
+	startedWg2.Add(1)
+	stopWg1.Add(1)
+	stopWg2.Add(1)
+
+	props1 := NewProps(func() Actor { return newTestActor(&startedWg1, nil, &stopWg1) })
+	props2 := NewProps(func() Actor { return newTestActor(&startedWg2, nil, &stopWg2) })
+
+	pid1 := engine.Spawn(props1)
+	pid2 := engine.Spawn(props2)
+
+	waitTimeout(&startedWg1, 500*time.Millisecond, t, "Actor 1 did not start")
+	waitTimeout(&startedWg2, 500*time.Millisecond, t, "Actor 2 did not start")
+
+	shutdownDone := make(chan struct{})
+	go func() {
+		engine.Shutdown(2 * time.Second) // Generous timeout for test
+		close(shutdownDone)
+	}()
+
+	// Wait for actors to receive Stopping
+	waitTimeout(&stopWg1, 1*time.Second, t, "Actor 1 did not receive Stopping during shutdown")
+	waitTimeout(&stopWg2, 1*time.Second, t, "Actor 2 did not receive Stopping during shutdown")
+
+	// Wait for shutdown to complete
+	select {
+	case <-shutdownDone:
+		// Shutdown completed
+	case <-time.After(3 * time.Second):
+		t.Fatal("Engine shutdown timed out")
+	}
+
+	// Verify engine state after shutdown
+	assert.True(t, engine.stopping.Load(), "Engine should be marked as stopping")
+	engine.mu.RLock()
+	assert.Empty(t, engine.actors, "Actors map should be empty after shutdown")
+	engine.mu.RUnlock()
+
+	// Verify mailboxes removed
+	_, mb1Exists := engine.mailboxMap.Load(pid1.ID)
+	_, mb2Exists := engine.mailboxMap.Load(pid2.ID)
+	assert.False(t, mb1Exists, "Mailbox 1 should be removed")
+	assert.False(t, mb2Exists, "Mailbox 2 should be removed")
+}
+
+// Test helper for waiting on WaitGroup with timeout
+func waitTimeout(wg *sync.WaitGroup, timeout time.Duration, t *testing.T, failMsg string) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// Wait succeeded
+	case <-time.After(timeout):
+		t.Fatalf("%s within %v", failMsg, timeout)
+	}
+}
+
+// TestEngine_Shutdown_Timeout requires an actor that blocks in Stopping
+type blockingActor struct {
+	StopWg *sync.WaitGroup
+}
+
+func (a *blockingActor) Receive(ctx Context) {
+	switch ctx.Message().(type) {
+	case Stopping:
+		if a.StopWg != nil {
+			a.StopWg.Done() // Signal that stopping started
+		}
+		// Block indefinitely to cause timeout
+		select {}
+	}
+}
+
+func TestEngine_Shutdown_Timeout(t *testing.T) {
+	engine := NewEngine()
+
+	var stopWg sync.WaitGroup
+	stopWg.Add(1)
+
+	// Spawn one actor that will block on stopping
+	props := NewProps(func() Actor { return &blockingActor{StopWg: &stopWg} })
+	pid := engine.Spawn(props)
+	assert.NotNil(t, pid)
+
+	// Spawn a normal actor that should stop
+	var startedWg, normalStopWg sync.WaitGroup
+	startedWg.Add(1)
+	normalStopWg.Add(1)
+	normalActor := newTestActor(&startedWg, nil, &normalStopWg)
+	propsNormal := NewProps(func() Actor { return normalActor })
+	pidNormal := engine.Spawn(propsNormal)
+	waitTimeout(&startedWg, 500*time.Millisecond, t, "Normal actor did not start")
+
+	shutdownDone := make(chan struct{})
+	go func() {
+		engine.Shutdown(200 * time.Millisecond) // Short timeout to trigger timeout logic
+		close(shutdownDone)
+	}()
+
+	// Wait for the blocking actor to start stopping
+	waitTimeout(&stopWg, 100*time.Millisecond, t, "Blocking actor did not receive Stopping")
+	// Wait for the normal actor to start stopping
+	waitTimeout(&normalStopWg, 100*time.Millisecond, t, "Normal actor did not receive Stopping")
+
+	// Wait for shutdown to complete (it will timeout)
+	select {
+	case <-shutdownDone:
+		// Shutdown completed
+	case <-time.After(1 * time.Second): // Wait longer than shutdown timeout
+		t.Fatal("Engine shutdown call did not return after timeout")
+	}
+
+	// Verify engine state after shutdown timeout
+	assert.True(t, engine.stopping.Load(), "Engine should be marked as stopping")
+	engine.mu.RLock()
+	// The actors map should be empty because the timeout logic forcibly clears it
+	assert.Empty(t, engine.actors, "Actors map should be empty after shutdown timeout")
+	engine.mu.RUnlock()
+
+	// Verify mailboxes removed
+	_, mbExists := engine.mailboxMap.Load(pid.ID)
+	_, mbNormalExists := engine.mailboxMap.Load(pidNormal.ID)
+	assert.False(t, mbExists, "Blocking actor mailbox should be removed")
+	assert.False(t, mbNormalExists, "Normal actor mailbox should be removed")
+}
+""""""
+
+
+File: go.mod
+""""""
+// File: go.mod (in bollywood repo)
+module github.com/lguibr/bollywood
+
+go 1.19 // Or your preferred Go version
+
+require github.com/stretchr/testify v1.9.0 // Version might differ
+
+require (
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
+)
+""""""
+
+
+File: go.sum
+""""""
+github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
+github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
+github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=
+github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
+gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
+gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+""""""
+
+
+File: messages.go
+""""""
+package bollywood
+
+// --- System Messages ---
+
+// Started is sent to an actor after its goroutine has started.
+type Started struct{}
+
+// Stopping is sent to an actor to signal it should prepare to stop.
+// The actor should finish its current message and perform cleanup.
+// No more user messages will be delivered after Stopping.
+type Stopping struct{}
+
+// Stopped is sent to an actor just before its goroutine exits.
+// This is the final message an actor will receive.
+type Stopped struct{}
+
+// Failure is sent to a supervisor when a child actor crashes.
+// (Not fully implemented in this basic version)
+type Failure struct {
+	Who    *PID
+	Reason interface{}
+}
+
+// --- Message Envelope ---
+
+// messageEnvelope wraps a user message with sender information.
+type messageEnvelope struct {
+	Sender  *PID
+	Message interface{}
+}
+""""""
+
+
+File: pid.go
+""""""
+package bollywood
+
+// PID (Process ID) represents a unique reference to an actor instance.
+type PID struct {
+	ID string
+	// We could add address/node info here for distributed actors later
+}
+
+// String returns the string representation of the PID.
+func (pid *PID) String() string {
+	return pid.ID
+}
+""""""
+
+
+File: process.go
+""""""
+// File: process.go
+package bollywood
+
+import (
+	"fmt"
+	"runtime/debug"
+	"sync/atomic"
+)
+
+const defaultMailboxSize = 1024
+
+// process represents the running instance of an actor, including its state and mailbox.
+type process struct {
+	engine  *Engine
+	pid     *PID
+	actor   Actor
+	mailbox chan *messageEnvelope
+	props   *Props
+	stopCh  chan struct{} // Signal to stop the run loop
+	stopped atomic.Bool   // Use atomic bool for safer concurrent checks
+}
+
+func newProcess(engine *Engine, pid *PID, props *Props) *process {
+	return &process{
+		engine:  engine,
+		pid:     pid,
+		props:   props,
+		mailbox: make(chan *messageEnvelope, defaultMailboxSize),
+		stopCh:  make(chan struct{}),
+	}
+}
+
+// sendMessage removed as it was unused. Messages are sent via Engine.Send.
+
+// run is the main loop for the actor process.
+func (p *process) run() {
+	var stoppingInvoked bool // Track if Stopping handler has been called
+
+	// Defer final cleanup and Stopped message
+	defer func() {
+		// Ensure actor is marked as stopped
+		p.stopped.Store(true)
+
+		// Recover from panic during Stopped processing
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("Actor %s panicked during final cleanup/Stopped processing: %v\n", p.pid.ID, r)
+			}
+			// Remove from engine *after* all cleanup attempts
+			p.engine.remove(p.pid)
+		}()
+
+		// Send the final Stopped message if actor was initialized and Stopping was invoked
+		if p.actor != nil && stoppingInvoked {
+			p.invokeReceive(Stopped{}, nil) // Call Stopped handler
+		} else if p.actor != nil && !stoppingInvoked {
+			fmt.Printf("WARN: Actor %s stopped without Stopping handler being invoked (likely due to early panic).\n", p.pid.ID)
+			p.invokeReceive(Stopped{}, nil)
+		}
+
+	}()
+
+	// Defer panic recovery for the main loop and actor initialization
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("Actor %s panicked: %v\nStack trace:\n%s\n", p.pid.ID, r, string(debug.Stack()))
+			// Ensure stopCh is closed on panic (non-blocking)
+			// and mark as stopped immediately
+			if p.stopped.CompareAndSwap(false, true) {
+				select {
+				case <-p.stopCh: // Already closed
+				default:
+					close(p.stopCh)
+				}
+				// Attempt to invoke Stopping handler on panic if not already invoked
+				if p.actor != nil && !stoppingInvoked {
+					p.invokeReceive(Stopping{}, nil)
+					stoppingInvoked = true
+				}
+			}
+		}
+	}()
+
+	// Create the actor instance
+	p.actor = p.props.Produce()
+	if p.actor == nil {
+		panic(fmt.Sprintf("Actor %s producer returned nil actor", p.pid.ID))
+	}
+	// Send Started message *after* actor is created
+	p.invokeReceive(Started{}, nil)
+
+	// Main message processing loop
+	for {
+		select {
+		case <-p.stopCh:
+			// Stop signal received directly (e.g., from engine.Stop or panic recovery)
+			if p.stopped.CompareAndSwap(false, true) {
+				// If not already marked stopped (e.g., by Stopping message),
+				// invoke Stopping handler now before exiting.
+				if !stoppingInvoked {
+					p.invokeReceive(Stopping{}, nil)
+					stoppingInvoked = true
+				}
+			}
+			return // Exit the loop, deferred functions will run
+
+		case envelope, ok := <-p.mailbox:
+			if !ok {
+				// Mailbox closed unexpectedly? Should not happen with current design.
+				fmt.Printf("Actor %s mailbox closed unexpectedly.\n", p.pid.ID)
+				if p.stopped.CompareAndSwap(false, true) {
+					select {
+					case <-p.stopCh:
+					default:
+						close(p.stopCh)
+					}
+					if !stoppingInvoked {
+						p.invokeReceive(Stopping{}, nil)
+						stoppingInvoked = true
+					}
+				}
+				return
+			}
+
+			// Check if stopped *after* receiving from mailbox,
+			// but before processing, unless it's a system message.
+			_, isStopping := envelope.Message.(Stopping)
+			_, isStoppedMsg := envelope.Message.(Stopped) // Renamed to avoid conflict
+			if p.stopped.Load() && !isStopping && !isStoppedMsg {
+				continue
+			}
+
+			// Handle system messages directly
+			switch msg := envelope.Message.(type) {
+			case Stopping:
+				if p.stopped.CompareAndSwap(false, true) { // Process only once
+					if !stoppingInvoked {
+						p.invokeReceive(msg, envelope.Sender)
+						stoppingInvoked = true
+					}
+					// Signal the loop to stop *after* processing Stopping
+					select {
+					case <-p.stopCh: // Already closed by engine.Stop?
+					default:
+						close(p.stopCh)
+					}
+				}
+			case Stopped:
+				fmt.Printf("WARN: Actor %s received unexpected Stopped message via mailbox.\n", p.pid.ID)
+				if p.stopped.CompareAndSwap(false, true) {
+					if !stoppingInvoked {
+						p.invokeReceive(Stopping{}, nil)
+						stoppingInvoked = true
+					}
+					p.invokeReceive(msg, envelope.Sender) // Call the received Stopped handler
+					select {
+					case <-p.stopCh:
+					default:
+						close(p.stopCh)
+					}
+				}
+			default:
+				// Process regular user message
+				p.invokeReceive(envelope.Message, envelope.Sender)
+			}
+		}
+	}
+}
+
+// invokeReceive calls the actor's Receive method within a protected context.
+func (p *process) invokeReceive(msg interface{}, sender *PID) {
+	// Create context for this message
+	ctx := &context{
+		engine:  p.engine,
+		self:    p.pid,
+		sender:  sender,
+		message: msg,
+	}
+
+	// Call the actor's Receive method, recovering from panics within it
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("Actor %s panicked during Receive(%T): %v\nStack trace:\n%s\n", p.pid.ID, msg, r, string(debug.Stack()))
+				// Ensure stopCh is closed on panic within Receive
+				if p.stopped.CompareAndSwap(false, true) {
+					select {
+					case <-p.stopCh:
+					default:
+						close(p.stopCh)
+					}
+					// Attempt to invoke Stopping handler on panic if not already invoked
+					p.invokeReceive(Stopping{}, nil) // Call stopping handler
+				}
+			}
+		}()
+		p.actor.Receive(ctx)
+	}()
+}
+""""""
+
+
+File: process_test.go
+""""""
+// File: process_test.go
+package bollywood
+
+import (
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+)
+
+// Using testActor from engine_test.go
+
+func TestProcess_LifecycleMessages(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+
+	var startedWg, stopWg sync.WaitGroup
+	startedWg.Add(1)
+	stopWg.Add(1)
+
+	actor := newTestActor(&startedWg, nil, &stopWg)
+	props := NewProps(func() Actor { return actor })
+	pid := engine.Spawn(props)
+
+	// Wait for Started
+	waitTimeout(&startedWg, 500*time.Millisecond, t, "Actor did not receive Started")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&actor.StartedCount), "StartedCount should be 1")
+
+	// Stop the actor
+	engine.Stop(pid)
+
+	// Wait for Stopping
+	waitTimeout(&stopWg, 500*time.Millisecond, t, "Actor did not receive Stopping")
+
+	// Allow time for Stopped processing and removal
+	time.Sleep(100 * time.Millisecond)
+
+	// Check Stopped was processed (indirectly, by checking count)
+	// Note: Checking the received messages might be unreliable for Stopped
+	// as the actor might be removed before the test can check its state.
+	// Checking the atomic counter is safer if the actor increments it in Stopped.
+	// Our current testActor doesn't increment in Stopped, but checks StoppingWg.
+	// We rely on the actor being removed from the engine as proof of completion.
+	engine.mu.RLock()
+	_, exists := engine.actors[pid.ID]
+	engine.mu.RUnlock()
+	assert.False(t, exists, "Actor should be removed after stopping")
+}
+
+func TestProcess_MessageOrder(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+
+	var startedWg, messageWg sync.WaitGroup
+	startedWg.Add(1)
+	messageWg.Add(3) // Expect 3 messages
+
+	actor := newTestActor(&startedWg, &messageWg, nil)
+	props := NewProps(func() Actor { return actor })
+	pid := engine.Spawn(props)
+
+	waitTimeout(&startedWg, 500*time.Millisecond, t, "Actor did not start")
+
+	engine.Send(pid, "msg1", nil)
+	engine.Send(pid, 2, nil)
+	engine.Send(pid, "msg3", nil)
+
+	waitTimeout(&messageWg, 500*time.Millisecond, t, "Actor did not receive all messages")
+
+	received := actor.GetReceived()
+
+	// Check order: Started, msg1, 2, msg3
+	assert.GreaterOrEqual(t, len(received), 4, "Should have received at least 4 messages (Started + 3 user)")
+	assert.IsType(t, Started{}, received[0])
+	assert.Equal(t, "msg1", received[1])
+	assert.Equal(t, 2, received[2])
+	assert.Equal(t, "msg3", received[3])
+}
+
+func TestProcess_PanicInReceive(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+
+	var startedWg, stopWg sync.WaitGroup
+	startedWg.Add(1)
+	stopWg.Add(1) // Expect Stopping to be called due to panic
+
+	actor := newTestActor(&startedWg, nil, &stopWg)
+	actor.PanicOnMsg = "panic now" // Configure actor to panic
+	props := NewProps(func() Actor { return actor })
+	pid := engine.Spawn(props)
+
+	waitTimeout(&startedWg, 500*time.Millisecond, t, "Actor did not start")
+
+	// Send a normal message first
+	engine.Send(pid, "ok message", nil)
+	time.Sleep(50 * time.Millisecond) // Allow processing
+
+	// Send the message that triggers panic
+	engine.Send(pid, "panic now", nil)
+
+	// Wait for the Stopping message triggered by the panic recovery
+	waitTimeout(&stopWg, 500*time.Millisecond, t, "Actor did not receive Stopping after panic")
+
+	// Allow time for actor removal
+	time.Sleep(100 * time.Millisecond)
+
+	// Check actor was removed
+	engine.mu.RLock()
+	_, exists := engine.actors[pid.ID]
+	engine.mu.RUnlock()
+	assert.False(t, exists, "Actor should be removed after panic")
+
+	// Check received messages
+	received := actor.GetReceived()
+	assert.Contains(t, received, "ok message")
+	// REMOVED: assert.Contains(t, received, "panic now") // This assertion is unreliable
+
+	// Check if Stopping was received (it should be invoked by recovery)
+	stoppingReceived := false
+	for _, msg := range received {
+		if _, ok := msg.(Stopping); ok {
+			stoppingReceived = true
+			break
+		}
+	}
+	assert.True(t, stoppingReceived, "Stopping message should have been invoked by panic recovery")
+}
+
+// Actor that panics immediately upon creation
+type panicOnInitActor struct{}
+
+func (a *panicOnInitActor) Receive(ctx Context) {
+	// This might not even be called if panic happens in producer/init
+}
+
+func TestProcess_PanicOnInit(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+
+	// Use a producer that returns nil, causing panic in process.run
+	props := NewProps(func() Actor {
+		// return nil // This causes panic inside process.run
+		// Let's test panic within the producer itself
+		panic("panic during actor production")
+		// return &panicOnInitActor{} // Unreachable
+	})
+
+	// Spawning should recover, but the actor won't be added successfully
+	// We can't easily get a PID back here if the spawn itself panics internally
+	// before returning the PID. Let's check the engine's actor map.
+	// We expect the spawn to potentially return nil or a PID that gets cleaned up.
+	pid := engine.Spawn(props) // This might recover internally and return nil/cleanup
+
+	time.Sleep(100 * time.Millisecond) // Allow time for potential cleanup
+
+	engine.mu.RLock()
+	assert.Empty(t, engine.actors, "Actors map should be empty after init panic")
+	engine.mu.RUnlock()
+	if pid != nil {
+		_, mbExists := engine.mailboxMap.Load(pid.ID)
+		assert.False(t, mbExists, "Mailbox should not exist for actor that panicked on init")
+	}
+}
+
+func TestProcess_MailboxFull(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+
+	// Actor that blocks message processing
+	blockChan := make(chan struct{})
+	props := NewProps(func() Actor {
+		return ActorFunc(func(ctx Context) {
+			switch ctx.Message().(type) {
+			case Started:
+			// Do nothing, just block
+			default:
+				<-blockChan // Block until test unblocks
+			}
+		})
+	})
+
+	pid := engine.Spawn(props)
+	assert.NotNil(t, pid)
+	time.Sleep(50 * time.Millisecond) // Allow actor to start
+
+	// Fill the mailbox
+	for i := 0; i < defaultMailboxSize+10; i++ { // Send more than capacity
+		engine.Send(pid, i, nil)
+	}
+
+	// Allow sends to potentially complete/fail
+	time.Sleep(100 * time.Millisecond)
+
+	// Check mailbox size (cannot directly check length of buffered channel easily from outside)
+	// We infer fullness by the fact that the actor is blocked and we sent > capacity.
+
+	// Send one more message - it should be dropped silently (non-blocking send)
+	engine.Send(pid, "last message", nil)
+
+	// Unblock the actor
+	close(blockChan)
+
+	// Actor should eventually process messages, but "last message" might be lost.
+	// This test mainly ensures the non-blocking send doesn't deadlock.
+}
+
+// Helper type for simple functional actors
+type ActorFunc func(ctx Context)
+
+func (f ActorFunc) Receive(ctx Context) {
+	f(ctx)
+}
+""""""
+
+
+File: props.go
+""""""
+package bollywood
+
+// Producer is a function that creates a new instance of an Actor.
+type Producer func() Actor
+
+// Props is a configuration object used to create actors.
+type Props struct {
+	producer Producer
+	// We could add mailbox configuration, supervisor strategy, etc. here later
+}
+
+// NewProps creates a new Props object with the given actor producer.
+func NewProps(producer Producer) *Props {
+	if producer == nil {
+		panic("bollywood: producer cannot be nil")
+	}
+	return &Props{
+		producer: producer,
+	}
+}
+
+// Produce creates a new actor instance using the configured producer.
+func (p *Props) Produce() Actor {
+	return p.producer()
+}
+""""""
+
+
+File: props_test.go
+""""""
+// File: props_test.go
+package bollywood
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+type dummyActor struct{}
+
+func (d *dummyActor) Receive(ctx Context) {}
+
+func TestProps_NewProps(t *testing.T) {
+	producer := func() Actor { return &dummyActor{} }
+	props := NewProps(producer)
+	assert.NotNil(t, props)
+	assert.NotNil(t, props.producer)
+
+	// Test nil producer panic
+	assert.PanicsWithValue(t, "bollywood: producer cannot be nil", func() {
+		NewProps(nil)
+	}, "NewProps(nil) should panic")
+}
+
+func TestProps_Produce(t *testing.T) {
+	producer := func() Actor { return &dummyActor{} }
+	props := NewProps(producer)
+	actorInstance := props.Produce()
+	assert.NotNil(t, actorInstance)
+	assert.IsType(t, &dummyActor{}, actorInstance)
+}
+""""""
+
+

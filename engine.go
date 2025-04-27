@@ -1,13 +1,18 @@
-// File: engine.go
+// File: bollywood/engine.go
 package bollywood
 
 import (
+	"errors"
 	"fmt"
-	"strings" // Import strings
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid" // Import UUID library
 )
+
+var ErrTimeout = errors.New("bollywood: ask timeout")
 
 // Engine manages the lifecycle and message dispatching for actors.
 type Engine struct {
@@ -16,11 +21,12 @@ type Engine struct {
 	mu         sync.RWMutex // Protects the actors map
 	stopping   atomic.Bool  // Indicates if the engine is shutting down
 	mailboxMap sync.Map     // Store mailboxes separately for non-blocking send
+	futures    sync.Map     // Stores pending Ask futures: map[requestID string]chan futureResponse
 }
 
 // Mailbox returns the mailbox channel for a given PID.
 // Used for potential non-blocking sends or external monitoring.
-func (e *Engine) Mailbox(pid *PID) chan *messageEnvelope {
+func (e *Engine) Mailbox(pid *PID) chan interface{} { // Return type changed to interface{}
 	if pid == nil {
 		return nil
 	}
@@ -28,7 +34,8 @@ func (e *Engine) Mailbox(pid *PID) chan *messageEnvelope {
 	if !ok {
 		return nil
 	}
-	mailbox, ok := val.(chan *messageEnvelope)
+	// Type assertion to the actual mailbox type used internally
+	mailbox, ok := val.(chan interface{}) // Changed type here
 	if !ok {
 		// This should not happen if stored correctly
 		fmt.Printf("ERROR: Invalid mailbox type found for PID %s\n", pid.ID)
@@ -41,7 +48,7 @@ func (e *Engine) Mailbox(pid *PID) chan *messageEnvelope {
 func NewEngine() *Engine {
 	return &Engine{
 		actors: make(map[string]*process),
-		// mailboxMap is zero-value initialized, which is fine for sync.Map
+		// mailboxMap and futures are zero-value initialized, which is fine for sync.Map
 	}
 }
 
@@ -74,7 +81,8 @@ func (e *Engine) Spawn(props *Props) *PID {
 	return pid
 }
 
-// Send delivers a message to the actor identified by the PID.
+// Send delivers a message asynchronously to the actor identified by the PID.
+// The sender PID is optional and indicates the source actor, if any.
 func (e *Engine) Send(pid *PID, message interface{}, sender *PID) {
 	if pid == nil {
 		return
@@ -85,21 +93,23 @@ func (e *Engine) Send(pid *PID, message interface{}, sender *PID) {
 	isSystemMsg := isStopping || isStopped
 
 	if e.stopping.Load() && !isSystemMsg {
+		// fmt.Printf("Engine stopping, dropping message %T to %s\n", message, pid.ID) // Debug log
 		return
 	}
 
 	val, ok := e.mailboxMap.Load(pid.ID)
 	if !ok {
+		// fmt.Printf("Mailbox not found for PID %s, dropping message %T\n", pid.ID, message) // Debug log
 		return
 	}
 
-	mailbox, ok := val.(chan *messageEnvelope)
+	mailbox, ok := val.(chan interface{}) // Expecting chan interface{} now
 	if !ok {
 		fmt.Printf("ERROR: Invalid mailbox type found for PID %s\n", pid.ID)
 		return
 	}
 
-	envelope := &messageEnvelope{
+	envelope := &messageEnvelope{ // Use the regular envelope for Send
 		Sender:  sender,
 		Message: message,
 	}
@@ -110,11 +120,88 @@ func (e *Engine) Send(pid *PID, message interface{}, sender *PID) {
 		// Message sent
 	default:
 		// Mailbox full, message dropped (avoid logging spam)
+		// fmt.Printf("Mailbox full for PID %s, dropping message %T\n", pid.ID, message) // Debug log
 	}
 }
 
+// Ask sends a message to the target actor and waits for a reply within the timeout.
+func (e *Engine) Ask(pid *PID, message interface{}, timeout time.Duration) (interface{}, error) {
+	if pid == nil {
+		return nil, errors.New("bollywood: ask target PID cannot be nil")
+	}
+	if e.stopping.Load() {
+		return nil, errors.New("bollywood: engine is stopping, cannot perform ask")
+	}
+
+	// 1. Generate unique request ID
+	requestID := uuid.NewString()
+
+	// 2. Create future (channel)
+	futureChan := make(chan futureResponse, 1) // Buffered channel of size 1
+
+	// 3. Store future
+	e.futures.Store(requestID, futureChan)
+	defer e.futures.Delete(requestID) // Ensure cleanup
+
+	// 4. Create ask envelope
+	envelope := &askEnvelope{
+		RequestID: requestID,
+		Sender:    nil, // Ask doesn't have an actor sender context itself
+		Message:   message,
+	}
+
+	// 5. Send envelope to target actor's mailbox
+	val, ok := e.mailboxMap.Load(pid.ID)
+	if !ok {
+		return nil, fmt.Errorf("bollywood: actor %s not found for ask", pid.ID)
+	}
+	mailbox, ok := val.(chan interface{}) // Expecting chan interface{}
+	if !ok {
+		fmt.Printf("ERROR: Invalid mailbox type found for PID %s during Ask\n", pid.ID)
+		return nil, fmt.Errorf("bollywood: internal error, invalid mailbox type for %s", pid.ID)
+	}
+
+	select {
+	case mailbox <- envelope:
+		// Envelope sent successfully
+	default:
+		// Mailbox full, cannot send Ask request
+		return nil, fmt.Errorf("bollywood: mailbox full for actor %s, cannot perform ask", pid.ID)
+	}
+
+	// 6. Wait for response or timeout
+	select {
+	case resp := <-futureChan:
+		return resp.Result, resp.Err // Return result or error from the future
+	case <-time.After(timeout):
+		// Timeout occurred, remove future (already deferred, but good practice)
+		e.futures.Delete(requestID)
+		return nil, ErrTimeout
+	}
+}
+
+// replyFuture is called by context.Reply to send the result back to the Ask caller.
+func (e *Engine) replyFuture(requestID string, replyMessage interface{}) {
+	if futureVal, ok := e.futures.Load(requestID); ok {
+		if futureChan, ok := futureVal.(chan futureResponse); ok {
+			// Send non-blockingly in case the asker timed out and is gone
+			select {
+			case futureChan <- futureResponse{Result: replyMessage, Err: nil}:
+				// Reply sent successfully
+			default:
+				// Asker might have timed out and deleted the future, or channel is blocked (shouldn't happen with buffer 1)
+				fmt.Printf("WARN: Bollywood Ask future channel blocked or receiver gone for request ID %s\n", requestID)
+			}
+			// Future is deleted by the Ask method's defer
+		} else {
+			fmt.Printf("ERROR: Invalid future channel type found for request ID %s\n", requestID)
+			e.futures.Delete(requestID) // Clean up invalid entry
+		}
+	}
+	// If future not found, the Ask likely timed out already.
+}
+
 // Stop requests an actor to stop processing messages and shut down.
-// It signals the actor's stop channel; the actor's run loop handles cleanup.
 func (e *Engine) Stop(pid *PID) {
 	if pid == nil {
 		return
@@ -132,7 +219,6 @@ func (e *Engine) Stop(pid *PID) {
 			close(proc.stopCh)
 		}
 	}
-	// Removed empty else block here
 }
 
 // remove removes an actor process from the engine's tracking. Called by process.run defer.
@@ -154,6 +240,21 @@ func (e *Engine) Shutdown(timeout time.Duration) {
 		return
 	}
 	fmt.Println("Engine shutdown initiated...")
+
+	// Cancel pending futures
+	e.futures.Range(func(key, value interface{}) bool {
+		requestID := key.(string)
+		if futureChan, ok := value.(chan futureResponse); ok {
+			// Send non-blockingly
+			select {
+			case futureChan <- futureResponse{Result: nil, Err: errors.New("bollywood: engine shutting down")}:
+			default:
+			}
+		}
+		e.futures.Delete(requestID) // Remove from map
+		return true
+	})
+	fmt.Println("Pending Ask futures cancelled.")
 
 	// Collect PIDs to stop while holding lock
 	e.mu.RLock()

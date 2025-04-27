@@ -1,7 +1,8 @@
-// File: engine_test.go
+// File: bollywood/engine_test.go
 package bollywood
 
 import (
+	"errors" // Import errors
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,7 @@ type testActor struct {
 	MessageWg    *sync.WaitGroup // Signal when a specific message is received
 	StopWg       *sync.WaitGroup // Signal when Stopping is received
 	PanicOnMsg   interface{}     // Message type to panic on
+	ReplyToAsk   interface{}     // Message to reply with for Ask requests
 }
 
 func newTestActor(startedWg, messageWg, stopWg *sync.WaitGroup) *testActor {
@@ -36,13 +38,29 @@ func (a *testActor) Receive(ctx Context) {
 	a.mu.Lock()
 	msg := ctx.Message() // Capture message while locked
 	a.Received = append(a.Received, msg)
-	a.mu.Unlock() // Unlock before potentially blocking wg.Done()
+	reply := a.ReplyToAsk // Capture reply while locked
+	a.mu.Unlock()         // Unlock before potentially blocking wg.Done() or Reply
 
 	// Handle panics for testing recovery
 	if a.PanicOnMsg != nil && fmt.Sprintf("%T", msg) == fmt.Sprintf("%T", a.PanicOnMsg) {
 		panic(fmt.Sprintf("test panic on %T", msg))
 	}
 
+	// Handle Ask requests
+	if ctx.RequestID() != "" {
+		if reply != nil {
+			ctx.Reply(reply)
+		} else {
+			// Default reply for Ask if none specified
+			ctx.Reply(fmt.Sprintf("ACK for %T", msg))
+		}
+		if a.MessageWg != nil {
+			a.MessageWg.Done() // Count Ask messages too
+		}
+		return // Don't process Ask messages further in this test actor
+	}
+
+	// Handle regular messages
 	switch msg.(type) {
 	case Started:
 		atomic.AddInt32(&a.StartedCount, 1)
@@ -389,4 +407,110 @@ func TestEngine_Shutdown_Timeout(t *testing.T) {
 	_, mbNormalExists := engine.mailboxMap.Load(pidNormal.ID)
 	assert.False(t, mbExists, "Blocking actor mailbox should be removed")
 	assert.False(t, mbNormalExists, "Normal actor mailbox should be removed")
+}
+
+// --- Ask Tests ---
+
+func TestEngine_Ask_Success(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+
+	var startedWg, messageWg sync.WaitGroup
+	startedWg.Add(1)
+	messageWg.Add(1) // Expect one Ask message
+
+	actor := newTestActor(&startedWg, &messageWg, nil)
+	actor.ReplyToAsk = "pong" // Configure reply for Ask
+	props := NewProps(func() Actor { return actor })
+	pid := engine.Spawn(props)
+
+	waitTimeout(&startedWg, 500*time.Millisecond, t, "Actor did not start")
+
+	reply, err := engine.Ask(pid, "ping", 500*time.Millisecond)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "pong", reply)
+
+	// Wait for the actor to process the message (optional, Ask already waited)
+	waitTimeout(&messageWg, 100*time.Millisecond, t, "Actor did not process Ask message")
+
+	received := actor.GetReceived()
+	assert.Contains(t, received, "ping", "Actor should have received 'ping'")
+}
+
+func TestEngine_Ask_Timeout(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+
+	var startedWg sync.WaitGroup
+	startedWg.Add(1)
+
+	// Actor that delays processing
+	actor := ActorFunc(func(ctx Context) {
+		switch ctx.Message().(type) {
+		case Started:
+			startedWg.Done()
+		case string: // The ask message
+			time.Sleep(200 * time.Millisecond) // Delay longer than timeout
+			if ctx.RequestID() != "" {
+				ctx.Reply("too late")
+			}
+		}
+	})
+
+	props := NewProps(func() Actor { return actor })
+	pid := engine.Spawn(props)
+	waitTimeout(&startedWg, 500*time.Millisecond, t, "Actor did not start")
+
+	reply, err := engine.Ask(pid, "ping", 100*time.Millisecond) // 100ms timeout
+
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrTimeout), "Error should be ErrTimeout")
+	assert.Nil(t, reply)
+
+	// Check future was cleaned up
+	foundFuture := false
+	engine.futures.Range(func(key, value interface{}) bool {
+		foundFuture = true
+		return false // Stop iteration
+	})
+	assert.False(t, foundFuture, "Futures map should be empty after timeout")
+}
+
+func TestEngine_Ask_ActorNotFound(t *testing.T) {
+	engine := NewEngine()
+	defer engine.Shutdown(1 * time.Second)
+
+	pid := &PID{ID: "non-existent-actor"}
+	reply, err := engine.Ask(pid, "ping", 100*time.Millisecond)
+
+	assert.Error(t, err)
+	assert.Nil(t, reply)
+	assert.Contains(t, err.Error(), "not found for ask")
+}
+
+func TestEngine_Ask_DuringShutdown(t *testing.T) {
+	engine := NewEngine()
+	var startedWg sync.WaitGroup
+	startedWg.Add(1)
+	props := NewProps(func() Actor { return newTestActor(&startedWg, nil, nil) })
+	pid := engine.Spawn(props)
+	waitTimeout(&startedWg, 500*time.Millisecond, t, "Actor did not start")
+
+	engine.stopping.Store(true) // Simulate shutdown
+
+	reply, err := engine.Ask(pid, "ping", 100*time.Millisecond)
+
+	assert.Error(t, err)
+	assert.Nil(t, reply)
+	assert.Contains(t, err.Error(), "engine is stopping")
+
+	engine.Shutdown(1 * time.Second) // Clean up properly
+}
+
+// Helper type for simple functional actors
+type ActorFunc func(ctx Context)
+
+func (f ActorFunc) Receive(ctx Context) {
+	f(ctx)
 }

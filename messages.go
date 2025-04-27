@@ -1,3 +1,4 @@
+// File: bollywood/messages.go
 package bollywood
 
 // --- System Messages ---
@@ -23,8 +24,23 @@ type Failure struct {
 
 // --- Message Envelope ---
 
-// messageEnvelope wraps a user message with sender information.
+// messageEnvelope wraps a user message with sender information for regular Send.
 type messageEnvelope struct {
 	Sender  *PID
 	Message interface{}
+}
+
+// --- Ask Pattern Internals ---
+
+// askEnvelope wraps a message sent via Ask, including a request ID for reply correlation.
+type askEnvelope struct {
+	RequestID string
+	Sender    *PID // The original asker
+	Message   interface{}
+}
+
+// futureResponse is used internally to pass Ask results back.
+type futureResponse struct {
+	Result interface{}
+	Err    error
 }

@@ -172,7 +172,7 @@ func TestProcess_MailboxFull(t *testing.T) {
 	// Actor that blocks message processing
 	blockChan := make(chan struct{})
 	props := NewProps(func() Actor {
-		return ActorFunc(func(ctx Context) {
+		return ActorFunc(func(ctx Context) { // Use ActorFunc from engine_test.go
 			switch ctx.Message().(type) {
 			case Started:
 			// Do nothing, just block
@@ -207,9 +207,10 @@ func TestProcess_MailboxFull(t *testing.T) {
 	// This test mainly ensures the non-blocking send doesn't deadlock.
 }
 
-// Helper type for simple functional actors
-type ActorFunc func(ctx Context)
-
-func (f ActorFunc) Receive(ctx Context) {
-	f(ctx)
-}
+// REMOVED Duplicate ActorFunc definition
+// // Helper type for simple functional actors
+// type ActorFunc func(ctx Context)
+//
+// func (f ActorFunc) Receive(ctx Context) {
+// 	f(ctx)
+// }
