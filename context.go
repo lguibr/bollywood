@@ -1,4 +1,3 @@
-
 package bollywood
 
 // Context provides information and capabilities to an Actor during message processing.
@@ -21,7 +20,7 @@ type context struct {
 	message interface{}
 }
 
-func (c *context) Engine() *Engine    { return c.engine }
-func (c *context) Self() *PID         { return c.self }
-func (c *context) Sender() *PID       { return c.sender }
+func (c *context) Engine() *Engine      { return c.engine }
+func (c *context) Self() *PID           { return c.self }
+func (c *context) Sender() *PID         { return c.sender }
 func (c *context) Message() interface{} { return c.message }

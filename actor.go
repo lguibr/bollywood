@@ -1,4 +1,3 @@
-
 package bollywood
 
 // Actor is the interface that defines actor behavior.

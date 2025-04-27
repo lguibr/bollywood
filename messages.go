@@ -1,4 +1,3 @@
-
 package bollywood
 
 // --- System Messages ---
@@ -18,7 +17,7 @@ type Stopped struct{}
 // Failure is sent to a supervisor when a child actor crashes.
 // (Not fully implemented in this basic version)
 type Failure struct {
-	Who   *PID
+	Who    *PID
 	Reason interface{}
 }
 
