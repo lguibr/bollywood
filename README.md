@@ -1,12 +1,12 @@
 
-# Bollywood Actor Library [![Go Test](https://github.com/<your-username>/bollywood/actions/workflows/test.yml/badge.svg)](https://github.com/<your-username>/bollywood/actions/workflows/test.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/<your-username>/bollywood)](https://goreportcard.com/report/github.com/<your-username>/bollywood) [![Go Reference](https://pkg.go.dev/badge/github.com/<your-username>/bollywood.svg)](https://pkg.go.dev/github.com/<your-username>/bollywood)
+# Bollywood Actor Library [![Go Test](https://github.com/lguibr/bollywood/actions/workflows/test.yml/badge.svg)](https://github.com/lguibr/bollywood/actions/workflows/test.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/lguibr/bollywood)](https://goreportcard.com/report/github.com/lguibr/bollywood) [![Go Reference](https://pkg.go.dev/badge/github.com/lguibr/bollywood.svg)](https://pkg.go.dev/github.com/lguibr/bollywood)
 
 Bollywood is a lightweight Actor Model implementation for Go, inspired by the principles of asynchronous message passing and state encapsulation. It aims to provide a simple yet powerful way to build concurrent applications using actors, channels, and minimal locking.
 
 ## Installation
 
 ```bash
-go get github.com/<your-username>/bollywood@latest
+go get github.com/lguibr/bollywood@latest
 ```
 
 ## Core Concepts
@@ -28,7 +28,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/<your-username>/bollywood" // Use the new module path
+	"github.com/lguibr/bollywood" // Use the new module path
 )
 
 // Define an actor struct
