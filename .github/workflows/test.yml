@@ -1,4 +1,4 @@
-# File: .github/workflows/test.yml (in new bollywood repo)
+# File: .github/workflows/test.yml (in bollywood repo)
 name: Bollywood-Test
 
 on:
@@ -21,5 +21,12 @@ jobs:
         cache: true
         cache-dependency-path: 'go.sum'
 
-    - name: Test
-      run: go test -v -race -covermode=atomic ./...
+    - name: Run tests with coverage
+      run: go test -v -race -covermode=atomic -coverprofile=coverage.out ./...
+
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }} # Optional: for private repos or specific needs
+        files: ./coverage.out
+        fail_ci_if_error: true # Optional: fail workflow if upload fails
